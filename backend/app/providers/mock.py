@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import math
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
-
-from PIL import Image
 
 from .base import ProviderResult, VideoProvider
 
 
 class MockProvider(VideoProvider):
-    """Local ffmpeg head-turn simulation — no Emergent / OpenAI dependency."""
+    """Local ffmpeg head-turn simulation — no Emergent / OpenAI / Pillow dependency."""
 
     name = "mock"
 
@@ -32,14 +28,28 @@ class MockProvider(VideoProvider):
         width, height = (int(x) for x in size.lower().split("x"))
         duration = int(seconds)
 
-        await asyncio.to_thread(
-            _render_head_turn,
-            image_path,
-            video_path,
-            width,
-            height,
-            duration,
-        )
+        try:
+            await asyncio.to_thread(
+                _render_head_turn,
+                image_path,
+                video_path,
+                width,
+                height,
+                duration,
+            )
+        except FileNotFoundError:
+            return ProviderResult(
+                status="failed",
+                message="Local render failed",
+                error="ffmpeg not found on PATH. Install ffmpeg and retry.",
+            )
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or b"").decode("utf-8", errors="ignore")[-500:]
+            return ProviderResult(
+                status="failed",
+                message="Local render failed",
+                error=detail or str(exc),
+            )
 
         if not video_path.exists() or video_path.stat().st_size < 1000:
             return ProviderResult(
@@ -81,74 +91,48 @@ def _render_head_turn(
     height: int,
     duration: int,
 ) -> None:
-    """Synthesize a 12s left→right look by yawing a portrait on a soft backdrop."""
+    """Synthesize a left→right look using only ffmpeg (no Pillow / C build deps)."""
     if not shutil.which("ffmpeg"):
-        raise RuntimeError("ffmpeg not found on PATH")
+        raise FileNotFoundError("ffmpeg not found on PATH")
 
-    fps = 16
-    total_frames = duration * fps
-    with tempfile.TemporaryDirectory(prefix="veriface-frames-") as tmp:
-        frame_dir = Path(tmp)
-        src = Image.open(image_path).convert("RGB")
-        # Cover 1280x720 crop
-        scale = max(width / src.width, height / src.height) * 1.15
-        resized = src.resize((int(src.width * scale), int(src.height * scale)), Image.Resampling.LANCZOS)
-        left = (resized.width - width) // 2
-        top = (resized.height - height) // 2
-        base = resized.crop((left, top, left + width, top + height))
+    # Oversized cover frame, then crop with a time-varying X offset that mimics yaw.
+    # Timeline (t seconds): face → look left → look right → face.
+    d = max(duration, 1)
+    x_expr = (
+        f"(iw-ow)/2"
+        f"+if(lt(t\\,{d}*0.12)\\,0\\,"
+        f"if(lt(t\\,{d}*0.38)\\,-90*sin(PI*(t-{d}*0.12)/({d}*0.26)/2)\\,"
+        f"if(lt(t\\,{d}*0.50)\\,-90\\,"
+        f"if(lt(t\\,{d}*0.76)\\,-90+180*((t-{d}*0.50)/({d}*0.26))\\,"
+        f"if(lt(t\\,{d}*0.88)\\,90\\,"
+        f"90*(1-(t-{d}*0.88)/({d}*0.12))"
+        f")))))"
+    )
+    vf = (
+        f"scale={width * 2}:{height * 2}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height}:{x_expr}:(ih-oh)/2,"
+        f"fps=24,format=yuv420p"
+    )
 
-        for i in range(total_frames):
-            t = i / max(total_frames - 1, 1)
-            # Face camera → look left → look right → face camera
-            if t < 0.12:
-                yaw = 0.0
-            elif t < 0.38:
-                yaw = -22.0 * _ease((t - 0.12) / 0.26)
-            elif t < 0.50:
-                yaw = -22.0
-            elif t < 0.76:
-                yaw = -22.0 + 44.0 * _ease((t - 0.50) / 0.26)
-            elif t < 0.88:
-                yaw = 22.0
-            else:
-                yaw = 22.0 * (1.0 - _ease((t - 0.88) / 0.12))
-
-            frame = _yaw_frame(base, yaw)
-            frame.save(frame_dir / f"frame_{i:05d}.jpg", quality=92)
-
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-framerate",
-            str(fps),
-            "-i",
-            str(frame_dir / "frame_%05d.jpg"),
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-movflags",
-            "+faststart",
-            "-crf",
-            "20",
-            str(video_path),
-        ]
-        subprocess.run(cmd, check=True, capture_output=True)
-
-
-def _ease(x: float) -> float:
-    x = max(0.0, min(1.0, x))
-    return 0.5 - 0.5 * math.cos(math.pi * x)
-
-
-def _yaw_frame(base: Image.Image, yaw_deg: float) -> Image.Image:
-    """Approximate yaw with horizontal squeeze + pan (fast, no per-pixel loops)."""
-    w, h = base.size
-    yaw = math.radians(yaw_deg)
-    scale_x = max(0.84, abs(math.cos(yaw)))
-    new_w = max(2, int(w * scale_x))
-    squeezed = base.resize((new_w, h), Image.Resampling.BILINEAR)
-    canvas = Image.new("RGB", (w, h), (24, 22, 20))
-    offset_x = (w - new_w) // 2 + int(math.sin(yaw) * w * 0.08)
-    canvas.paste(squeezed, (offset_x, 0))
-    return canvas
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-loop",
+        "1",
+        "-i",
+        str(image_path),
+        "-t",
+        str(duration),
+        "-vf",
+        vf,
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "-crf",
+        "20",
+        str(video_path),
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)

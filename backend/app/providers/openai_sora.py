@@ -57,6 +57,12 @@ class OpenAISoraProvider(VideoProvider):
                 )
             if resp.status_code >= 400:
                 detail = _extract_error(resp)
+                if resp.status_code == 404 and "api.openai.com" in self.base_url:
+                    detail = (
+                        "OpenAI removed the public Sora Videos API (/v1/videos) on 2026-09-24. "
+                        "Set VIDEO_PROVIDER=mock in backend/.env for local ffmpeg renders, "
+                        "or point OPENAI_BASE_URL at a Sora-compatible proxy."
+                    )
                 return ProviderResult(
                     status="failed",
                     message="Sora 2 rejected the request",

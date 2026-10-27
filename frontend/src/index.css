@@ -1,0 +1,112 @@
+@import "tailwindcss";
+
+:root {
+  --vf-bg: #f7f5f2;
+  --vf-fg: #1c1917;
+  --vf-card: #ffffff;
+  --vf-card-border: #e7e5e4;
+  --vf-primary: #c2410c;
+  --vf-primary-hover: #9a3412;
+  --vf-secondary: #d6d3d1;
+  --vf-success: #15803d;
+  --vf-error: #b91c1c;
+  --vf-muted: #78716c;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+  background-color: var(--vf-bg);
+  color: var(--vf-fg);
+  font-family: "Manrope", -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.font-display {
+  font-family: "Cabinet Grotesk", "Manrope", sans-serif;
+  font-weight: 800;
+  letter-spacing: -0.04em;
+}
+
+.font-mono-vf {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.vf-stagger {
+  opacity: 0;
+  transform: translateY(14px);
+  animation: vfStagger 0.7s cubic-bezier(0.2, 0.7, 0.2, 1) forwards;
+}
+.vf-stagger.delay-1 {
+  animation-delay: 0.05s;
+}
+.vf-stagger.delay-2 {
+  animation-delay: 0.15s;
+}
+.vf-stagger.delay-3 {
+  animation-delay: 0.25s;
+}
+.vf-stagger.delay-4 {
+  animation-delay: 0.35s;
+}
+@keyframes vfStagger {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.vf-grain::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.05;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)' opacity='0.6'/></svg>");
+  mix-blend-mode: multiply;
+}
+
+.vf-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--vf-primary);
+  box-shadow: 0 0 0 0 rgba(194, 65, 12, 0.5);
+  animation: vfPulse 1.6s ease-out infinite;
+}
+@keyframes vfPulse {
+  70% {
+    box-shadow: 0 0 0 14px rgba(194, 65, 12, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(194, 65, 12, 0);
+  }
+}
+
+.vf-progress {
+  position: relative;
+  height: 4px;
+  width: 100%;
+  background: #e7e5e4;
+  overflow: hidden;
+  border-radius: 999px;
+}
+.vf-progress::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, var(--vf-primary), transparent);
+  animation: vfScan 1.4s ease-in-out infinite;
+}
+@keyframes vfScan {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(280%);
+  }
+}

@@ -1,95 +1,79 @@
 # Veriface (standalone)
 
-Identity verification video tool: upload a front-facing portrait → get a **12s 720p MP4** of the same person looking **left**, then **right** — a KYC-friendly proof-of-life clip.
+Identity verification video tool: upload a front-facing portrait → get a **~10s 720p MP4** of the same person looking **left**, then **right** — a KYC-friendly proof-of-life clip.
 
-This is a **standalone** recreation of the Emergent preview at `gaze-verification.preview.emergentagent.com`. It does **not** depend on Emergent hosting, `emergent.sh` scripts, or Emergent LLM keys.
+Standalone recreation of the Emergent preview. **No Emergent dependency.**
 
-## Stack
+## How generation works
 
-| Layer | Tech |
-| --- | --- |
-| Frontend | React + Vite + Tailwind v4 |
-| Backend | FastAPI (`/api/verify/*`) |
-| Default render | Local **mock** provider (ffmpeg only) |
-| Optional AI | OpenAI Videos API (`sora-2` / `sora-2-pro`) via `VIDEO_PROVIDER=openai` |
+Anthropic **does not** offer a video API. Veriface’s `anthropic` provider does this instead:
 
-> **Note:** OpenAI shut down the public Sora Videos API on **2026-09-24**. The OpenAI provider remains for compatible proxies (`OPENAI_BASE_URL`) or any account that still exposes `/v1/videos`. Out of the box, Veriface uses the **mock** provider so the full upload → poll → download flow works offline.
+1. **Claude (vision)** reads the portrait and writes a strict liveness prompt  
+2. **Kling via fal.ai** turns that into an image-to-video clip (`FAL_KEY`)  
+3. If `FAL_KEY` is missing, it falls back to a **local ffmpeg mock** after Claude crafts the prompt  
+
+| `VIDEO_PROVIDER` | Needs | What it does |
+| --- | --- | --- |
+| `anthropic` | `ANTHROPIC_API_KEY` (+ `FAL_KEY` for real video) | Claude prompt → Kling (or mock) |
+| `fal` | `FAL_KEY` | Kling only (fixed prompt) |
+| `mock` | ffmpeg | Local pan demo, no cloud |
+| `openai` | `OPENAI_API_KEY` | Legacy; public `/v1/videos` shut down 2026-09-24 |
 
 ## Quick start
 
 ### Prerequisites
 
 - Node 20+
-- Python **3.11–3.14** (3.14 works; avoid pinning old Pillow — this project uses ffmpeg-only mock rendering)
-- [ffmpeg](https://ffmpeg.org/) on `PATH` (required for mock renders). On Windows: `winget install ffmpeg` or install from https://ffmpeg.org/download.html and add it to PATH.
+- Python 3.11–3.14
+- [ffmpeg](https://ffmpeg.org/) on `PATH` (for mock). Windows: `winget install ffmpeg`
+- `ANTHROPIC_API_KEY` from https://console.anthropic.com  
+- `FAL_KEY` from https://fal.ai (for real AI video)
 
-### 1. Backend
+### Backend
 
-```bash
+```bat
 cd backend
 python -m venv .venv
-# Windows:
 .venv\Scripts\activate
-# macOS / Linux:
-# source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
-copy .env.example .env        # Windows; on Unix: cp .env.example .env
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+copy .env.example .env
 ```
 
-API root: [http://127.0.0.1:8000/api/](http://127.0.0.1:8000/api/)
+Edit `backend\.env`:
 
-### 2. Frontend
+```env
+VIDEO_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+FAL_KEY=your-fal-key
+```
 
-```bash
+```bat
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+### Frontend
+
+```bat
 cd frontend
 npm install
 npm run dev
 ```
 
-App: [http://127.0.0.1:5173](http://127.0.0.1:5173) — Vite proxies `/api` → the backend.
+Open http://127.0.0.1:5173
 
-## API (same contract as the Emergent app)
+## API
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `POST` | `/api/verify/start` | `multipart/form-data`: `image` + `model` (`sora-2` \| `sora-2-pro`) → `{ job_id }` |
-| `GET` | `/api/verify/status/{job_id}` | `{ status, message, progress, error? }` |
-| `GET` | `/api/verify/download/{job_id}` | MP4 bytes when `status === completed` |
-
-## Environment
-
-| Variable | Default | Meaning |
-| --- | --- | --- |
-| `VIDEO_PROVIDER` | `mock` | `mock` or `openai` |
-| `OPENAI_API_KEY` | — | Required for `openai` |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Override for proxies |
-| `CORS_ORIGINS` | localhost Vite ports | Comma-separated origins |
-| `VITE_API_URL` | `/api` | Frontend API base (leave default with Vite proxy) |
-
-### Using OpenAI / a Sora-compatible proxy
-
-```bash
-# backend/.env
-VIDEO_PROVIDER=openai
-OPENAI_API_KEY=sk-...
-# OPENAI_BASE_URL=https://your-compatible-proxy/v1
-```
-
-## Project layout
-
-```
-veriface/
-  backend/app/          # FastAPI + providers (mock, openai)
-  frontend/src/         # Veriface UI
-  .env.example
-```
+| `POST` | `/api/verify/start` | `image` + `model` (`sora-2`=Kling fast, `sora-2-pro`=Kling Pro) |
+| `GET` | `/api/verify/status/{job_id}` | Job status |
+| `GET` | `/api/verify/download/{job_id}` | MP4 when completed |
 
 ## Privacy
 
-Uploads are written under `backend/data/jobs/<id>/` for the job lifetime only and are purged after ~1 hour. Nothing is sent to Emergent. With `VIDEO_PROVIDER=mock`, nothing leaves your machine.
+Uploads live under `backend/data/jobs/<id>/` and are purged after ~1 hour. With `mock` only, nothing leaves your machine. With `anthropic`/`fal`, the image is sent to Anthropic and/or fal.ai per their policies.
 
 ## License
 
-MIT — use freely for your own deployments.
+MIT

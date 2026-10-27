@@ -10,7 +10,7 @@ This is a **standalone** recreation of the Emergent preview at `gaze-verificatio
 | --- | --- |
 | Frontend | React + Vite + Tailwind v4 |
 | Backend | FastAPI (`/api/verify/*`) |
-| Default render | Local **mock** provider (Pillow + ffmpeg) |
+| Default render | Local **mock** provider (ffmpeg only) |
 | Optional AI | OpenAI Videos API (`sora-2` / `sora-2-pro`) via `VIDEO_PROVIDER=openai` |
 
 > **Note:** OpenAI shut down the public Sora Videos API on **2026-09-24**. The OpenAI provider remains for compatible proxies (`OPENAI_BASE_URL`) or any account that still exposes `/v1/videos`. Out of the box, Veriface uses the **mock** provider so the full upload → poll → download flow works offline.
@@ -20,17 +20,21 @@ This is a **standalone** recreation of the Emergent preview at `gaze-verificatio
 ### Prerequisites
 
 - Node 20+
-- Python 3.11+
-- [ffmpeg](https://ffmpeg.org/) on `PATH` (required for mock renders)
+- Python **3.11–3.14** (3.14 works; avoid pinning old Pillow — this project uses ffmpeg-only mock rendering)
+- [ffmpeg](https://ffmpeg.org/) on `PATH` (required for mock renders). On Windows: `winget install ffmpeg` or install from https://ffmpeg.org/download.html and add it to PATH.
 
 ### 1. Backend
 
 ```bash
 cd backend
-python3 -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# macOS / Linux:
+# source .venv/bin/activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
-cp .env.example .env        # optional
+copy .env.example .env        # Windows; on Unix: cp .env.example .env
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 

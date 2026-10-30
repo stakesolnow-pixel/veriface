@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiofiles
+import httpx
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
@@ -28,17 +30,17 @@ async def lifespan(app: FastAPI):
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     (settings.data_dir / "jobs").mkdir(parents=True, exist_ok=True)
     app.state.settings = settings
+    # Webcam flow works without a video provider. Provider is optional/legacy.
     try:
         app.state.provider = get_provider(settings)
+        app.state.provider_error = None
     except Exception as exc:
-        logger.error("Provider init failed: %s", exc)
+        logger.warning("Video provider unavailable (webcam still works): %s", exc)
         app.state.provider = None
         app.state.provider_error = str(exc)
-    else:
-        app.state.provider_error = None
     logger.info(
-        "Veriface API ready · provider=%s",
-        getattr(app.state.provider, "name", "unavailable"),
+        "Veriface API ready · mode=webcam · legacy_provider=%s",
+        getattr(app.state.provider, "name", "none"),
     )
     purge_task = asyncio.create_task(_purge_loop())
     yield
@@ -72,9 +74,83 @@ async def api_root():
     return {
         "message": "Veriface API",
         "status": "ok",
+        "mode": "webcam",
         "provider": getattr(provider, "name", None),
         "standalone": True,
     }
+
+
+@app.post("/api/verify/webcam-review")
+async def webcam_review(frames: list[UploadFile] = File(...)):
+    """Optional Claude vision review of stills captured during webcam liveness."""
+    settings = app.state.settings
+    if not settings.anthropic_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Set ANTHROPIC_API_KEY in backend/.env for optional Claude review. Download still works without it.",
+        )
+    if not frames:
+        raise HTTPException(status_code=400, detail="No frames uploaded.")
+
+    content_blocks: list[dict] = []
+    for i, upload in enumerate(frames[:6]):
+        raw = await upload.read()
+        if not raw or len(raw) > settings.max_upload_bytes:
+            continue
+        mime = (upload.content_type or "image/jpeg").split(";")[0]
+        if mime not in ALLOWED_TYPES:
+            mime = "image/jpeg"
+        content_blocks.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": mime,
+                    "data": base64.b64encode(raw).decode("ascii"),
+                },
+            }
+        )
+        content_blocks.append(
+            {"type": "text", "text": f"Frame {i + 1} filename hint: {upload.filename or 'frame.jpg'}"}
+        )
+
+    if not content_blocks:
+        raise HTTPException(status_code=400, detail="No valid image frames.")
+
+    content_blocks.append(
+        {
+            "type": "text",
+            "text": (
+                "These stills are from a webcam KYC liveness recording. "
+                "Briefly assess (5–8 sentences): (1) is a single clear face visible, "
+                "(2) do the frames plausibly show center → left → right head turns, "
+                "(3) any issues (blur, occlusion, multiple people, too dark). "
+                "End with PASS, WEAK, or FAIL."
+            ),
+        }
+    )
+
+    payload = {
+        "model": settings.anthropic_model,
+        "max_tokens": 500,
+        "messages": [{"role": "user", "content": content_blocks}],
+    }
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        resp = await client.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={
+                "x-api-key": settings.anthropic_api_key,
+                "anthropic-version": "2023-06-01",
+                "content-type": "application/json",
+            },
+            json=payload,
+        )
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Anthropic error: {resp.text[:300]}")
+    data = resp.json()
+    parts = data.get("content") or []
+    text = "".join(p.get("text", "") for p in parts if p.get("type") == "text").strip()
+    return {"review": text or "No review text returned."}
 
 
 @app.get("/api/health")
